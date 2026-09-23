@@ -1,0 +1,22 @@
+# stdio MCP server: no ports are published. Clients start it per session with
+#   docker compose run --rm -T mcp serve
+# usually through SSH, so MCP traffic only ever travels inside the SSH tunnel.
+services:
+  mcp:
+    build: .
+    image: onedrive-mcp:latest
+    env_file: .env  # ONEDRIVE_CLIENT_ID=...
+    volumes:
+      - token-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stdin_open: true
+    restart: "no"
+
+volumes:
+  token-data:
