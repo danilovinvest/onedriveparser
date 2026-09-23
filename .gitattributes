@@ -1,0 +1,3 @@
+# Windows scripts are stored byte-exact (CRLF, UTF-8 BOM on .ps1) so that
+# cmd.exe and Windows PowerShell 5.1 read them correctly after any checkout.
+scripts/windows/* -text

@@ -66,6 +66,22 @@ Claude Desktop (`claude_desktop_config.json`):
 }
 ```
 
+## Windows installer (Claude Desktop, nothing else required)
+
+Copy the whole project folder to the PC (zip, USB, LocalSend…), then
+double-click `scripts\windows\install.bat`. It:
+
+1. installs [uv](https://docs.astral.sh/uv/) and Python 3.12 (per user, no admin)
+2. copies the project to `%LOCALAPPDATA%\onedrive-mcp` and installs dependencies
+3. opens the Microsoft sign-in page for the device code login (skipped if already signed in)
+4. adds `onedrive` to `claude_desktop_config.json`, keeping existing servers (backup in `.bak`)
+
+Then fully quit Claude Desktop (tray icon → Quit) and start it again.
+Re-running the installer is safe. `scripts\windows\uninstall.bat` removes the
+Claude Desktop entry, the OneDrive token and the install folder.
+
+`onedrive-mcp status` exits 0 when signed in, 3 when a login is needed.
+
 ## Running on a server (Docker, over SSH)
 
 The container publishes no port: Claude starts it per session through SSH, so

@@ -62,6 +62,32 @@ def test_get_token_silent_success(tmp_path: Path) -> None:
     assert app.scopes == ["Files.Read", "User.Read"]
 
 
+class DeviceFlowApp(FakeApp):
+    def initiate_device_flow(self, scopes: list[str]) -> dict:
+        return {
+            "user_code": "ABC",
+            "message": "enter ABC",
+            "verification_uri": "https://www.microsoft.com/link",
+        }
+
+    def acquire_token_by_device_flow(self, flow: dict) -> dict:
+        return {"access_token": "tok", "id_token_claims": {"preferred_username": "me@x"}}
+
+
+def test_login_shows_code_and_opens_browser(tmp_path: Path) -> None:
+    shown: list[str] = []
+    opened: list[str] = []
+    provider = provider_with(tmp_path, DeviceFlowApp([], None))
+    user = provider.login(show=shown.append, open_url=opened.append)
+    assert (user, shown, opened) == ("me@x", ["enter ABC"], ["https://www.microsoft.com/link"])
+
+
+def test_account_name(tmp_path: Path) -> None:
+    assert provider_with(tmp_path, FakeApp([], None)).account_name() is None
+    app = FakeApp([{"username": "me@x"}], None)
+    assert provider_with(tmp_path, app).account_name() == "me@x"
+
+
 def test_get_token_silent_failure_explains(tmp_path: Path) -> None:
     app = FakeApp([{"username": "me"}], {"error_description": "refresh token expired"})
     with pytest.raises(AuthError, match="refresh token expired"):

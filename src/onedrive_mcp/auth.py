@@ -73,7 +73,15 @@ class TokenProvider:
             )
         return result["access_token"]
 
-    def login(self, show: Callable[[str], None] = print) -> str:
+    def account_name(self) -> str | None:
+        accounts = self._app.get_accounts()
+        return accounts[0].get("username") if accounts else None
+
+    def login(
+        self,
+        show: Callable[[str], None] = print,
+        open_url: Callable[[str], object] | None = None,
+    ) -> str:
         """Run the device code flow; returns the signed-in username."""
         flow = self._app.initiate_device_flow(scopes=list(self._settings.scopes))
         if "user_code" not in flow:
@@ -81,6 +89,8 @@ class TokenProvider:
                 f"Device flow failed: {flow.get('error_description', flow)}"
             )
         show(flow["message"])
+        if open_url and flow.get("verification_uri"):
+            open_url(flow["verification_uri"])
         result = self._app.acquire_token_by_device_flow(flow)
         if "access_token" not in result:
             raise AuthError(
