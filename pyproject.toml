@@ -1,0 +1,33 @@
+[project]
+name = "onedrive-mcp"
+version = "0.1.0"
+description = "Local MCP server giving Claude read-only access to a personal OneDrive"
+readme = "README.md"
+authors = [
+    { name = "3mg", email = "140186933+sertr4linee@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+    "mcp>=2.2.0",
+    "msal>=1.39.0",
+    "openpyxl>=3.1.5",
+    "pypdf>=6.19.0",
+    "python-docx>=1.2.0",
+]
+
+[project.scripts]
+onedrive-mcp = "onedrive_mcp.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "respx>=0.23.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
