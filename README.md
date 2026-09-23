@@ -66,6 +66,24 @@ Claude Desktop (`claude_desktop_config.json`):
 }
 ```
 
+## Running on a server (Docker, over SSH)
+
+The container publishes no port: Claude starts it per session through SSH, so
+MCP traffic only travels inside the SSH tunnel and tokens stay in a volume.
+
+```bash
+# on the server, in /opt/onedrive-mcp (code + .env with ONEDRIVE_CLIENT_ID)
+docker compose build
+docker compose run --rm -T mcp login   # device code, once
+
+# on your machine
+claude mcp add -s user onedrive -- ssh -o BatchMode=yes root@<host> \
+  docker compose -f /opt/onedrive-mcp/compose.yaml run --rm -T mcp serve
+```
+
+Update: ship the new code (`git archive HEAD | ssh root@<host> tar -x -C
+/opt/onedrive-mcp`) then `docker compose build` again; the token volume is kept.
+
 ## Configuration
 
 | Variable | Default |
