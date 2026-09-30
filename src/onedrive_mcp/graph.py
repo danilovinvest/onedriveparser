@@ -16,6 +16,11 @@ GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 # base32-ish. Anything else is rejected before it reaches a URL.
 _ITEM_ID_RE = re.compile(r"^[A-Za-z0-9!._-]{1,256}$")
 _ITEM_FIELDS = "id,name,size,file,folder,lastModifiedDateTime,webUrl,parentReference"
+_CONFLICT = "@microsoft.graph.conflictBehavior"
+# Characters OneDrive refuses in a file or folder name.
+_FORBIDDEN_NAME_CHARS = frozenset('"*:<>?/\\|')
+# Graph's simple upload (one PUT) is only guaranteed up to 4 MB.
+MAX_UPLOAD_BYTES = 4 * 1024 * 1024
 
 
 class GraphError(RuntimeError):
@@ -52,7 +57,7 @@ class DriveItem:
 def item_path(item_id: str | None = None, path: str | None = None) -> str:
     """Graph path addressing one item by id, by drive path, or the root."""
     if item_id:
-        if not _ITEM_ID_RE.match(item_id):
+        if not _ITEM_ID_RE.match(item_id) or item_id in (".", ".."):
             raise ValueError(f"Invalid item id: {item_id!r}")
         return f"/me/drive/items/{quote(item_id, safe='!')}"
     segments = [s for s in (path or "").split("/") if s]
@@ -61,6 +66,32 @@ def item_path(item_id: str | None = None, path: str | None = None) -> str:
     if any(s in (".", "..") for s in segments):
         raise ValueError("Path must not contain '.' or '..' segments")
     return f"/me/drive/root:/{'/'.join(quote(s, safe='') for s in segments)}:"
+
+
+def validate_name(name: str) -> str:
+    """Check one file or folder name (not a path) before it reaches Graph."""
+    if not name.strip() or name in (".", ".."):
+        raise ValueError(f"Invalid name: {name!r}")
+    if _FORBIDDEN_NAME_CHARS.intersection(name):
+        raise ValueError(f"Name must not contain any of \" * : < > ? / \\ |: {name!r}")
+    return name
+
+
+def split_path(path: str) -> tuple[str, str]:
+    """Split a drive path into (parent path, validated last segment)."""
+    segments = [s for s in path.split("/") if s]
+    if not segments:
+        raise ValueError("Give a path ending with a file or folder name")
+    return "/".join(segments[:-1]), validate_name(segments[-1])
+
+
+def require_non_root(item_id: str | None, path: str | None) -> None:
+    """Changes must target a real item: `root` is also a valid Graph item id."""
+    if item_id:
+        if item_id.lower() == "root":
+            raise ValueError("The drive root cannot be changed")
+    elif not (path or "").strip("/"):
+        raise ValueError("Give a path or an item_id")
 
 
 def search_path(query: str) -> str:
@@ -94,13 +125,28 @@ class GraphClient:
         token = await asyncio.to_thread(self._get_token)
         return {"Authorization": f"Bearer {token}"}
 
-    async def _get_json(self, url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
-        if not url.startswith(GRAPH_BASE):
+    async def _request(
+        self,
+        method: str,
+        url: str,
+        params: dict[str, str] | None = None,
+        json: dict[str, Any] | None = None,
+        content: bytes | None = None,
+    ) -> httpx.Response:
+        if not url.startswith(GRAPH_BASE + "/"):
             raise GraphError(0, f"Refusing to send token to {url!r}")
-        response = await self._http.get(url, params=params, headers=await self._headers())
+        headers = await self._headers()
+        if content is not None:
+            headers = {**headers, "Content-Type": "application/octet-stream"}
+        response = await self._http.request(
+            method, url, params=params, json=json, content=content, headers=headers
+        )
         if response.status_code >= 400:
             raise GraphError(response.status_code, _error_message(response))
-        return response.json()
+        return response
+
+    async def _get_json(self, url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+        return (await self._request("GET", url, params)).json()
 
     async def _collect(self, path: str, limit: int) -> list[DriveItem]:
         url: str | None = GRAPH_BASE + path
@@ -148,3 +194,45 @@ class GraphClient:
                     raise ValueError(f"{item.name!r} exceeded the {max_bytes} byte limit")
                 chunks.append(chunk)
         return b"".join(chunks)
+
+    async def upload(self, path: str, data: bytes, overwrite: bool = False) -> DriveItem:
+        """Create the file at `path`, or replace it when `overwrite` is set."""
+        parent, name = split_path(path)
+        if len(data) > MAX_UPLOAD_BYTES:
+            raise ValueError(
+                f"Content is {len(data)} bytes, above the {MAX_UPLOAD_BYTES} byte upload limit"
+            )
+        url = GRAPH_BASE + item_path(path=f"{parent}/{name}") + "/content"
+        params = {_CONFLICT: "replace" if overwrite else "fail"}
+        response = await self._request("PUT", url, params, content=data)
+        return DriveItem.from_graph(response.json())
+
+    async def create_folder(self, path: str) -> DriveItem:
+        parent, name = split_path(path)
+        body = {"name": name, "folder": {}, _CONFLICT: "fail"}
+        url = GRAPH_BASE + item_path(path=parent) + "/children"
+        return DriveItem.from_graph((await self._request("POST", url, json=body)).json())
+
+    async def update_item(
+        self,
+        item_id: str | None = None,
+        path: str | None = None,
+        new_name: str | None = None,
+        new_parent_id: str | None = None,
+    ) -> DriveItem:
+        """Rename and/or move one item; the root itself cannot be changed."""
+        require_non_root(item_id, path)
+        body: dict[str, Any] = {}
+        if new_name:
+            body["name"] = validate_name(new_name)
+        if new_parent_id:
+            body["parentReference"] = {"id": new_parent_id}
+        if not body:
+            raise ValueError("Give a new name and/or a destination folder")
+        url = GRAPH_BASE + item_path(item_id, path)
+        return DriveItem.from_graph((await self._request("PATCH", url, json=body)).json())
+
+    async def delete_item(self, item_id: str | None = None, path: str | None = None) -> None:
+        """Send one item to the OneDrive recycle bin; refuses the root."""
+        require_non_root(item_id, path)
+        await self._request("DELETE", GRAPH_BASE + item_path(item_id, path))

@@ -1,4 +1,4 @@
-"""MCP server exposing read-only OneDrive tools over stdio."""
+"""MCP server exposing OneDrive read and write tools over stdio."""
 
 from __future__ import annotations
 
@@ -18,13 +18,17 @@ from onedrive_mcp.extract import UnsupportedFormat, extract_text, truncate
 from onedrive_mcp.graph import GraphClient, GraphError
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=True)
+WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=True)
+DESTRUCTIVE = ToolAnnotations(read_only_hint=False, destructive_hint=True, open_world_hint=True)
 MAX_LIMIT = 1000
 
 server = MCPServer(
     "onedrive",
     instructions=(
-        "Read-only access to the user's personal OneDrive. Use `search` or "
-        "`list_folder` to find items, then `read_file` with the item id."
+        "Read and write access to the user's personal OneDrive. Use `search` or "
+        "`list_folder` to find items, then `read_file` with the item id. "
+        "`write_file`, `create_folder`, `move_item` and `delete_item` change the "
+        "drive: confirm with the user before overwriting or deleting."
     ),
 )
 
@@ -108,6 +112,58 @@ async def read_file(path: str = "", item_id: str = "") -> str:
     except Exception as exc:  # corrupt or encrypted document
         raise ValueError(f"Could not parse {item.name!r}: {exc}") from exc
     return truncate(text, settings.max_text_chars)
+
+
+@server.tool(annotations=DESTRUCTIVE)
+@_user_errors
+async def write_file(path: str, content: str, overwrite: bool = False) -> dict[str, Any]:
+    """Create a UTF-8 text file at a drive path like "Documents/notes.md" (the
+    parent folder must exist). Fails if the file exists unless `overwrite` is
+    true, which replaces its content. Limited to 4 MB."""
+    client = await _client()
+    return asdict(await client.upload(path, content.encode("utf-8"), overwrite))
+
+
+@server.tool(annotations=WRITE)
+@_user_errors
+async def create_folder(path: str) -> dict[str, Any]:
+    """Create a folder at a drive path like "Documents/Taxes/2026" (the parent
+    folder must exist). Fails if an item with that name already exists."""
+    client = await _client()
+    return asdict(await client.create_folder(path))
+
+
+@server.tool(annotations=WRITE)
+@_user_errors
+async def move_item(
+    path: str = "",
+    item_id: str = "",
+    destination_path: str = "",
+    destination_id: str = "",
+    new_name: str = "",
+) -> dict[str, Any]:
+    """Move and/or rename one item. Give the destination folder as a drive
+    path ("/" for the root) or an item id to move it, `new_name` to rename it,
+    or both. Fails if the target name is already taken."""
+    if destination_path and destination_id:
+        raise ValueError("Give destination_path or destination_id, not both")
+    client = await _client()
+    if destination_path:
+        destination_id = (await client.get_item(path=destination_path)).id
+    item = await client.update_item(
+        item_id or None, path or None, new_name or None, destination_id or None
+    )
+    return asdict(item)
+
+
+@server.tool(annotations=DESTRUCTIVE)
+@_user_errors
+async def delete_item(path: str = "", item_id: str = "") -> str:
+    """Delete one file or folder (with everything in it). The item goes to the
+    OneDrive recycle bin, where the user can restore it."""
+    client = await _client()
+    await client.delete_item(item_id or None, path or None)
+    return f"Deleted {item_id or path} (moved to the recycle bin)"
 
 
 def run() -> None:

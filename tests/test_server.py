@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import httpx
@@ -30,11 +31,72 @@ def fake_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_tools_are_registered_read_only() -> None:
+async def test_tools_are_registered_with_annotations() -> None:
     async with Client(server.server) as client:
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-    assert set(tools) == {"list_folder", "search", "get_metadata", "read_file"}
-    assert all(tool.annotations.read_only_hint for tool in tools.values())
+    read_only = {"list_folder", "search", "get_metadata", "read_file"}
+    destructive = {"write_file", "delete_item"}
+    assert set(tools) == read_only | destructive | {"create_folder", "move_item"}
+    for name, tool in tools.items():
+        assert tool.annotations.read_only_hint is (name in read_only)
+        if name not in read_only:
+            assert tool.annotations.destructive_hint is (name in destructive)
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_write_file_uploads_utf8_without_overwriting(fake_context: None) -> None:
+    route = respx.put(f"{GRAPH_BASE}/me/drive/root:/Docs/note.txt:/content").mock(
+        return_value=httpx.Response(201, json=NOTE)
+    )
+    async with Client(server.server) as client:
+        result = await client.call_tool(
+            "write_file", {"path": "Docs/note.txt", "content": "été"}
+        )
+    assert not result.is_error
+    request = route.calls[0].request
+    assert request.content == "été".encode()
+    assert request.url.params["@microsoft.graph.conflictBehavior"] == "fail"
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_move_item_resolves_destination_path(fake_context: None) -> None:
+    respx.get(f"{GRAPH_BASE}/me/drive/root:/Archive:").mock(
+        return_value=httpx.Response(200, json={"id": "ABC!9", "name": "Archive", "folder": {}})
+    )
+    route = respx.patch(f"{GRAPH_BASE}/me/drive/items/ABC!7").mock(
+        return_value=httpx.Response(200, json=NOTE)
+    )
+    async with Client(server.server) as client:
+        result = await client.call_tool(
+            "move_item", {"item_id": "ABC!7", "destination_path": "Archive"}
+        )
+    assert not result.is_error
+    assert json.loads(route.calls[0].request.content) == {"parentReference": {"id": "ABC!9"}}
+
+
+@pytest.mark.anyio
+async def test_move_item_rejects_two_destinations(fake_context: None) -> None:
+    async with Client(server.server) as client:
+        result = await client.call_tool(
+            "move_item",
+            {"item_id": "ABC!7", "destination_path": "Archive", "destination_id": "ABC!9"},
+        )
+    assert result.is_error and "not both" in result.content[0].text
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_delete_item_and_root_refusal(fake_context: None) -> None:
+    route = respx.delete(f"{GRAPH_BASE}/me/drive/items/ABC!7").mock(
+        return_value=httpx.Response(204)
+    )
+    async with Client(server.server) as client:
+        deleted = await client.call_tool("delete_item", {"item_id": "ABC!7"})
+        refused = await client.call_tool("delete_item", {})
+    assert not deleted.is_error and route.call_count == 1
+    assert refused.is_error and "path or an item_id" in refused.content[0].text
 
 
 @pytest.mark.anyio

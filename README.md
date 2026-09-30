@@ -1,6 +1,6 @@
 # onedrive-mcp
 
-Local MCP server giving Claude **read-only** access to a **personal** OneDrive
+Local MCP server giving Claude **read and write** access to a **personal** OneDrive
 (outlook.com / hotmail.com / live.com accounts) through Microsoft Graph.
 No work or school account required.
 
@@ -12,6 +12,10 @@ Tools exposed to Claude:
 | `search` | Search names and contents across the drive |
 | `get_metadata` | Size, type, dates and web link of one item |
 | `read_file` | Download a file and return its text (pdf, docx, xlsx, plain text) |
+| `write_file` | Create a UTF-8 text file at a drive path (max 4 MB); replaces an existing file only with `overwrite` |
+| `create_folder` | Create a folder at a drive path; fails if the name is taken |
+| `move_item` | Move an item to another folder and/or rename it |
+| `delete_item` | Send a file or folder to the OneDrive recycle bin |
 
 ## 1. Register an app (one time)
 
@@ -26,7 +30,7 @@ directory, so you first need your own (free) Entra directory:
    - Redirect URI: leave empty
 3. In the new app → **Authentication** → **Advanced settings** → set
    **Allow public client flows** to **Yes** (required for the device code login).
-4. **API permissions** → Microsoft Graph → *Delegated*: `Files.Read`, `User.Read`
+4. **API permissions** → Microsoft Graph → *Delegated*: `Files.ReadWrite`, `User.Read`
    (`offline_access` is requested automatically).
 5. Copy the **Application (client) ID** from the Overview page.
 
@@ -42,6 +46,9 @@ uv run onedrive-mcp login     # prints a code to enter at microsoft.com/devicelo
 
 Tokens are cached in `~/.config/onedrive-mcp/token_cache.json` (mode `0600`)
 and refreshed silently. `uv run onedrive-mcp logout` removes them.
+
+Upgrading from a read-only version: run `onedrive-mcp login` again so the
+cached token is re-issued with the `Files.ReadWrite` permission.
 
 ## 3. Connect Claude
 

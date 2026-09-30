@@ -1,1 +1,1 @@
-"""Read-only OneDrive MCP server for personal Microsoft accounts."""
+"""OneDrive MCP server (read and write) for personal Microsoft accounts."""

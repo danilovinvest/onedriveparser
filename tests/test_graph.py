@@ -1,14 +1,18 @@
+import json
+
 import httpx
 import pytest
 import respx
 
 from onedrive_mcp.graph import (
     GRAPH_BASE,
+    MAX_UPLOAD_BYTES,
     DriveItem,
     GraphClient,
     GraphError,
     item_path,
     search_path,
+    split_path,
 )
 
 FILE = {"id": "ABC!12", "name": "a.txt", "size": 5, "file": {"mimeType": "text/plain"}}
@@ -26,7 +30,7 @@ def test_item_path_variants() -> None:
     assert item_path(path="My Docs/été.pdf") == "/me/drive/root:/My%20Docs/%C3%A9t%C3%A9.pdf:"
 
 
-@pytest.mark.parametrize("bad", ["../x", "a/b?c", "x y", ""])
+@pytest.mark.parametrize("bad", ["../x", "a/b?c", "x y", ".", "..", ""])
 def test_item_path_rejects_bad_ids(bad: str) -> None:
     if bad == "":
         assert item_path(item_id=bad) == "/me/drive/root"
@@ -79,6 +83,12 @@ async def test_refuses_next_link_outside_graph() -> None:
 
 
 @pytest.mark.anyio
+async def test_refuses_lookalike_graph_host() -> None:
+    with pytest.raises(GraphError, match="Refusing"):
+        await make_client()._get_json(f"{GRAPH_BASE}.evil.example/me")
+
+
+@pytest.mark.anyio
 @respx.mock
 async def test_graph_error_message_is_surfaced() -> None:
     respx.get(f"{GRAPH_BASE}/me/drive/items/NOPE").mock(
@@ -119,3 +129,108 @@ async def test_download_caps_stream_when_size_lies() -> None:
     )
     with pytest.raises(ValueError, match="exceeded"):
         await make_client().download(DriveItem.from_graph(FILE), max_bytes=10)
+
+
+def test_split_path() -> None:
+    assert split_path("/Docs/Taxes/a.txt") == ("Docs/Taxes", "a.txt")
+    assert split_path("a.txt") == ("", "a.txt")
+
+
+@pytest.mark.parametrize("bad", ["", "/", "Docs/a:b.txt", "Docs/..", "Docs/a?.txt", "Docs/ "])
+def test_split_path_rejects_bad_names(bad: str) -> None:
+    with pytest.raises(ValueError):
+        split_path(bad)
+
+
+@pytest.mark.anyio
+@respx.mock
+@pytest.mark.parametrize(("overwrite", "behavior"), [(False, "fail"), (True, "replace")])
+async def test_upload_sends_bytes_and_conflict_behavior(overwrite: bool, behavior: str) -> None:
+    route = respx.put(f"{GRAPH_BASE}/me/drive/root:/Docs/a.txt:/content").mock(
+        return_value=httpx.Response(201, json=FILE)
+    )
+    item = await make_client().upload("Docs/a.txt", b"hello", overwrite=overwrite)
+    request = route.calls[0].request
+    assert item.id == "ABC!12"
+    assert request.content == b"hello"
+    assert request.url.params["@microsoft.graph.conflictBehavior"] == behavior
+    assert request.headers["Authorization"] == "Bearer tok"
+
+
+@pytest.mark.anyio
+async def test_upload_rejects_oversized_content_and_missing_name() -> None:
+    client = make_client()
+    with pytest.raises(ValueError, match="upload limit"):
+        await client.upload("a.txt", b"x" * (MAX_UPLOAD_BYTES + 1))
+    with pytest.raises(ValueError, match="name"):
+        await client.upload("/", b"x")
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_upload_conflict_is_surfaced() -> None:
+    respx.put(f"{GRAPH_BASE}/me/drive/root:/a.txt:/content").mock(
+        return_value=httpx.Response(409, json={"error": {"message": "Name already exists"}})
+    )
+    with pytest.raises(GraphError, match="409: Name already exists"):
+        await make_client().upload("a.txt", b"x")
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_create_folder_posts_to_parent() -> None:
+    nested = respx.post(f"{GRAPH_BASE}/me/drive/root:/Docs:/children").mock(
+        return_value=httpx.Response(201, json=FOLDER)
+    )
+    at_root = respx.post(f"{GRAPH_BASE}/me/drive/root/children").mock(
+        return_value=httpx.Response(201, json=FOLDER)
+    )
+    client = make_client()
+    assert (await client.create_folder("Docs/Taxes")).kind == "folder"
+    await client.create_folder("Taxes")
+    expected = {"name": "Taxes", "folder": {}, "@microsoft.graph.conflictBehavior": "fail"}
+    assert json.loads(nested.calls[0].request.content) == expected
+    assert json.loads(at_root.calls[0].request.content) == expected
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_update_item_renames_and_moves() -> None:
+    route = respx.patch(f"{GRAPH_BASE}/me/drive/items/ABC!12").mock(
+        return_value=httpx.Response(200, json=FILE)
+    )
+    await make_client().update_item("ABC!12", new_name="b.txt", new_parent_id="ABC!1")
+    assert json.loads(route.calls[0].request.content) == {
+        "name": "b.txt",
+        "parentReference": {"id": "ABC!1"},
+    }
+
+
+@pytest.mark.anyio
+async def test_update_item_validates_arguments() -> None:
+    client = make_client()
+    with pytest.raises(ValueError, match="new name"):
+        await client.update_item("ABC!12")
+    with pytest.raises(ValueError, match="path or an item_id"):
+        await client.update_item(path="/", new_name="x")
+    with pytest.raises(ValueError, match="must not contain"):
+        await client.update_item("ABC!12", new_name="a/b")
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_delete_item_by_path_and_refuses_root() -> None:
+    route = respx.delete(f"{GRAPH_BASE}/me/drive/root:/Docs/a.txt:").mock(
+        return_value=httpx.Response(204)
+    )
+    client = make_client()
+    await client.delete_item(path="Docs/a.txt")
+    assert route.called
+    for root in ("", "/", None):
+        with pytest.raises(ValueError, match="path or an item_id"):
+            await client.delete_item(path=root)
+    for root_id in ("root", "ROOT"):
+        with pytest.raises(ValueError, match="root cannot be changed"):
+            await client.delete_item(root_id)
+        with pytest.raises(ValueError, match="root cannot be changed"):
+            await client.update_item(root_id, new_name="x")

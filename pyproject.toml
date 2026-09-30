@@ -1,7 +1,7 @@
 [project]
 name = "onedrive-mcp"
 version = "0.1.0"
-description = "Local MCP server giving Claude read-only access to a personal OneDrive"
+description = "Local MCP server giving Claude read and write access to a personal OneDrive"
 readme = "README.md"
 authors = [
     { name = "3mg", email = "140186933+sertr4linee@users.noreply.github.com" }
