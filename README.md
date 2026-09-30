@@ -30,7 +30,7 @@ directory, so you first need your own (free) Entra directory:
    - Redirect URI: leave empty
 3. In the new app → **Authentication** → **Advanced settings** → set
    **Allow public client flows** to **Yes** (required for the device code login).
-4. **API permissions** → Microsoft Graph → *Delegated*: `Files.ReadWrite`, `User.Read`
+4. **API permissions** → Microsoft Graph → *Delegated*: `Files.ReadWrite.All`, `User.Read`
    (`offline_access` is requested automatically).
 5. Copy the **Application (client) ID** from the Overview page.
 
@@ -48,7 +48,7 @@ Tokens are cached in `~/.config/onedrive-mcp/token_cache.json` (mode `0600`)
 and refreshed silently. `uv run onedrive-mcp logout` removes them.
 
 Upgrading from a read-only version: run `onedrive-mcp login` again so the
-cached token is re-issued with the `Files.ReadWrite` permission.
+cached token is re-issued with the `Files.ReadWrite.All` permission.
 
 ## 3. Connect Claude
 

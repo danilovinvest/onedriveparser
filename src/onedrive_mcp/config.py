@@ -9,8 +9,8 @@ from pathlib import Path
 # Personal Microsoft accounts only (outlook.com, hotmail.com, live.com).
 DEFAULT_AUTHORITY = "https://login.microsoftonline.com/consumers"
 # offline_access / openid / profile are reserved: msal adds them itself.
-# Files.ReadWrite covers reading too.
-SCOPES = ("Files.ReadWrite", "User.Read")
+# Files.ReadWrite.All covers reading too.
+SCOPES = ("Files.ReadWrite.All", "User.Read")
 DEFAULT_CACHE_PATH = Path.home() / ".config" / "onedrive-mcp" / "token_cache.json"
 DEFAULT_MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
 DEFAULT_MAX_TEXT_CHARS = 100_000

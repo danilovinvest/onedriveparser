@@ -59,7 +59,7 @@ def test_get_token_without_login_asks_to_login(tmp_path: Path) -> None:
 def test_get_token_silent_success(tmp_path: Path) -> None:
     app = FakeApp([{"username": "me"}], {"access_token": "tok"})
     assert provider_with(tmp_path, app).get_token() == "tok"
-    assert app.scopes == ["Files.ReadWrite", "User.Read"]
+    assert app.scopes == ["Files.ReadWrite.All", "User.Read"]
 
 
 class DeviceFlowApp(FakeApp):
