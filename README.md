@@ -87,6 +87,12 @@ Then fully quit Claude Desktop (tray icon → Quit) and start it again.
 Re-running the installer is safe. `scripts\windows\uninstall.bat` removes the
 Claude Desktop entry, the OneDrive token and the install folder.
 
+To update an existing install (new tools, new permissions): copy the new
+project folder to the PC, quit Claude Desktop, then double-click
+`scripts\windows\update.bat`. It replaces the installed code, refreshes the
+dependencies and asks for the Microsoft sign-in again so the token carries the
+new permissions.
+
 `onedrive-mcp status` exits 0 when signed in, 3 when a login is needed.
 
 ## Running on a server (Docker, over SSH)

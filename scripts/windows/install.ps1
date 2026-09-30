@@ -11,8 +11,13 @@
        (les autres serveurs deja configures sont conserves)
 
     Relancable sans risque : chaque etape deja faite est sautee ou rafraichie.
+
+    Avec -Update (update.bat) : met a jour une installation existante avec le
+    code de ce dossier et redemande la connexion Microsoft, necessaire quand
+    les permissions de l'application ont change (ex. lecture -> ecriture).
 #>
 param(
+    [switch]$Update,
     [string]$ClientId = "9a9b2062-3a4c-4b63-a4b1-c0ec74683494",
     [string]$InstallDir = (Join-Path $env:LOCALAPPDATA "onedrive-mcp")
 )
@@ -97,11 +102,17 @@ function Copy-Project([string]$From, [string]$To) {
     Write-Host "Projet copié dans $To"
 }
 
-function Connect-OneDrive([string]$ServerExe) {
-    $code = Invoke-Native $ServerExe @("status")
-    if ($code -eq 0) { return }
-    if ($code -ne $ExitNotSignedIn) {
-        throw "Impossible de vérifier la connexion OneDrive (code $code)."
+function Connect-OneDrive([string]$ServerExe, [bool]$Force) {
+    if ($Force) {
+        # Un token déjà en cache garde ses anciens droits : seule une nouvelle
+        # connexion fait accepter les nouvelles permissions.
+        Write-Host "Les permissions ont changé : une nouvelle connexion Microsoft est nécessaire."
+    } else {
+        $code = Invoke-Native $ServerExe @("status")
+        if ($code -eq 0) { return }
+        if ($code -ne $ExitNotSignedIn) {
+            throw "Impossible de vérifier la connexion OneDrive (code $code)."
+        }
     }
     Write-Host ""
     Write-Host "Une page Microsoft va s'ouvrir dans ton navigateur." -ForegroundColor Yellow
@@ -138,6 +149,9 @@ function Register-ClaudeDesktop([string]$ConfigPath, [string]$ServerExe, [string
 
 function Install-OneDriveMcp {
     if ($env:OS -ne "Windows_NT") { throw "Ce script est prévu pour Windows." }
+    if ($Update -and -not (Test-Path (Join-Path $InstallDir "pyproject.toml"))) {
+        throw "Aucune installation trouvée dans $InstallDir. Lance install.bat à la place."
+    }
 
     Write-Step "1/5  uv et Python"
     $uv = Install-Uv
@@ -154,7 +168,7 @@ function Install-OneDriveMcp {
 
     Write-Step "4/5  Connexion OneDrive"
     $env:ONEDRIVE_CLIENT_ID = $ClientId
-    Connect-OneDrive $serverExe
+    Connect-OneDrive $serverExe $Update.IsPresent
 
     Write-Step "5/5  Claude Desktop"
     foreach ($path in Get-ClaudeConfigPaths) {
@@ -162,7 +176,11 @@ function Install-OneDriveMcp {
     }
 
     Write-Host ""
-    Write-Host "Installation terminée." -ForegroundColor Green
+    if ($Update) {
+        Write-Host "Mise à jour terminée." -ForegroundColor Green
+    } else {
+        Write-Host "Installation terminée." -ForegroundColor Green
+    }
     Write-Host "Quitte complètement Claude Desktop (icône près de l'horloge > Quitter), puis relance-le."
     Write-Host "Vérification : Paramètres > Developer, 'onedrive' doit être 'running'."
 }
