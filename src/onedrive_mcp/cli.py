@@ -1,4 +1,4 @@
-"""Command line entry point: `onedrive-mcp {login,logout,status,serve}`."""
+"""Command line entry point: `onedrive-mcp {login,logout,status,serve,serve-http}`."""
 
 from __future__ import annotations
 
@@ -49,16 +49,29 @@ def _serve(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _serve_http(_args: argparse.Namespace) -> int:
+    from onedrive_mcp.remote import run
+
+    run()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="onedrive-mcp")
-    parser.add_argument("command", choices=("login", "logout", "status", "serve"))
+    parser.add_argument("command", choices=("login", "logout", "status", "serve", "serve-http"))
     parser.add_argument(
         "--open-browser",
         action="store_true",
         help="login: open the sign-in page in the default browser",
     )
     args = parser.parse_args(argv)
-    handlers = {"login": _login, "logout": _logout, "status": _status, "serve": _serve}
+    handlers = {
+        "login": _login,
+        "logout": _logout,
+        "status": _status,
+        "serve": _serve,
+        "serve-http": _serve_http,
+    }
     try:
         return handlers[args.command](args)
     except (ConfigError, AuthError) as exc:
