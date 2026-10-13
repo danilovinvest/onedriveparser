@@ -1,6 +1,6 @@
 # onedrive-mcp
 
-Local MCP server giving Claude **read and write** access to a **personal** OneDrive
+MCP server giving Claude **read and write** access to a **personal** OneDrive
 (outlook.com / hotmail.com / live.com accounts) through Microsoft Graph.
 No work or school account required.
 
@@ -113,6 +113,45 @@ claude mcp add -s user onedrive -- ssh -o BatchMode=yes root@<host> \
 Update: ship the new code (`git archive HEAD | ssh root@<host> tar -x -C
 /opt/onedrive-mcp`) then `docker compose build` again; the token volume is kept.
 
+## Remote (claude.ai)
+
+claude.ai custom connectors reach the server over Streamable HTTP. They cannot
+send headers, so the secret lives in the URL: the endpoint is `/mcp/<token>`
+and every other path answers an empty 404. The token is compared in constant
+time and masked (`/mcp/***`) in the server logs. Requests are stateless and
+answered as plain JSON, which keeps the reverse proxy simple.
+
+```bash
+# on the server, in /opt/onedrive-mcp
+python -c "import secrets;print(secrets.token_hex(32))"   # paste into .env:
+#   ONEDRIVE_MCP_TOKEN=<64 hex chars>
+docker compose build
+docker compose run --rm -T mcp login   # device code, once (same token volume)
+docker compose up -d http              # listens on 127.0.0.1:4310 only
+```
+
+`serve-http` refuses to start when `ONEDRIVE_MCP_TOKEN` is missing, shorter
+than 32 characters, or contains anything but letters, digits, `-` and `_`.
+
+Expose it through the reverse proxy of the connector host (Caddy):
+
+```caddy
+example.com {
+    handle_path /onedrive/* {
+        reverse_proxy 127.0.0.1:4310
+    }
+}
+```
+
+`handle_path` strips the `/onedrive` prefix, so the backend receives
+`/mcp/<token>`. In claude.ai → Settings → Connectors → Add custom connector,
+use `https://example.com/onedrive/mcp/<token>`.
+
+The URL is the password: anyone holding it can read **and write** the drive.
+Do not enable access logs for this host in the proxy (or make sure they do not
+record the path), and rotate the token (edit `.env`, `docker compose up -d
+http`) if it leaks.
+
 ## Configuration
 
 | Variable | Default |
@@ -122,6 +161,8 @@ Update: ship the new code (`git archive HEAD | ssh root@<host> tar -x -C
 | `ONEDRIVE_AUTHORITY` | `https://login.microsoftonline.com/consumers` |
 | `ONEDRIVE_MAX_DOWNLOAD_BYTES` | `20971520` (20 MB) |
 | `ONEDRIVE_MAX_TEXT_CHARS` | `100000` |
+| `ONEDRIVE_MCP_TOKEN` | required by `serve-http` (32+ chars, URL-safe) |
+| `ONEDRIVE_MCP_PORT` | `8000` (`serve-http` listen port, on `0.0.0.0`) |
 
 ## Development
 

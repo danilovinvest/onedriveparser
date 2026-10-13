@@ -1,6 +1,10 @@
-# stdio MCP server: no ports are published. Clients start it per session with
-#   docker compose run --rm -T mcp serve
-# usually through SSH, so MCP traffic only ever travels inside the SSH tunnel.
+# Two services share one image and one token volume:
+#   mcp  — stdio, no ports. Clients start it per session with
+#            docker compose run --rm -T mcp serve
+#          usually through SSH, so MCP traffic only travels inside the SSH tunnel.
+#   http — Streamable HTTP for claude.ai custom connectors. Listens on
+#          127.0.0.1:4310 only; a reverse proxy (Caddy) terminates TLS in front.
+#          Needs ONEDRIVE_MCP_TOKEN in .env (the secret in /mcp/<token>).
 services:
   mcp:
     build: .
@@ -17,6 +21,24 @@ services:
       - no-new-privileges:true
     stdin_open: true
     restart: "no"
+
+  http:
+    build: .
+    image: onedrive-mcp:latest
+    env_file: .env  # ONEDRIVE_CLIENT_ID=..., ONEDRIVE_MCP_TOKEN=...
+    command: ["serve-http"]
+    ports:
+      - "127.0.0.1:4310:8000"
+    volumes:
+      - token-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
 
 volumes:
   token-data:
